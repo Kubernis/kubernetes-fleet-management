@@ -14,7 +14,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/Kubernis/fleet-management.git
+    repoURL: https://github.com/Kubernis/kubernetes-fleet-management.git
     targetRevision: main
     path: clusters/local-k3d/manifests/namespaces
   destination:

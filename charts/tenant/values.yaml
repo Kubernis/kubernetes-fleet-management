@@ -1,0 +1,40 @@
+# Defaults. Every value here is overridden per tenant by the ApplicationSet,
+# which feeds it the contents of that tenant's tenant.yaml.
+tenant:
+  name: ""
+  team: ""
+  stage: dev
+  tier: small
+
+# THE STANDARD. A developer picks a t-shirt size; the platform team decides what
+# a size costs. Changing a number here re-quotas every tenant on that tier at the
+# next sync — which is the whole point of owning the template centrally.
+tiers:
+  small:
+    cpuRequests: "2"
+    memoryRequests: 4Gi
+    pods: "20"
+  medium:
+    cpuRequests: "8"
+    memoryRequests: 16Gi
+    pods: "60"
+  large:
+    cpuRequests: "24"
+    memoryRequests: 48Gi
+    pods: "150"
+
+# Per-container defaults for anything deployed into the tenant that forgets to
+# ask. Feeds the hasLimits scorecard rule — a workload cannot land unlimited.
+containerDefaults:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# Deny-by-default ingress, with same-namespace traffic allowed back in. Off for
+# stage=dev would be a tempting shortcut; we do not take it, because "prod has
+# controls dev never exercised" is exactly the drift this repo exists to stop.
+networkPolicy:
+  enabled: true

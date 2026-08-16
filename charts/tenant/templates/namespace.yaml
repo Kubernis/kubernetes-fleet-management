@@ -1,0 +1,18 @@
+# The namespace itself, plus the labels that make it findable from Port.
+#
+# port-environment is the join key: the Port ArgoCD integration reads it off the
+# generated Application, and the Kubernetes exporter reads it off this namespace.
+# Both sides therefore resolve to the same environment entity without anyone
+# hand-maintaining a mapping table.
+#
+# `required` on name and team so a truncated tenant.yaml fails the render instead
+# of creating a namespace called "" owned by nobody.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ required "tenant.name is required" .Values.tenant.name | quote }}
+  labels:
+    app.kubernetes.io/managed-by: fleet-management
+    port-environment: {{ required "tenant.name is required" .Values.tenant.name | quote }}
+    port-team: {{ required "tenant.team is required" .Values.tenant.team | quote }}
+    port-stage: {{ required "tenant.stage is required" .Values.tenant.stage | quote }}

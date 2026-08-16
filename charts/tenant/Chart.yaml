@@ -1,0 +1,8 @@
+apiVersion: v2
+name: tenant
+description: >-
+  The platform team's definition of what a tenant environment IS. One namespace,
+  quota, default limits and a deny-by-default network posture. Developers never
+  write this — they request a tenant and inherit whatever this chart says today.
+type: application
+version: 0.1.0

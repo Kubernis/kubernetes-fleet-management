@@ -1,0 +1,19 @@
+# Hard ceiling for the tenant, resolved from the requested tier.
+#
+# The explicit `fail` matters: `index` on an unknown tier returns nil, and every
+# quota field then renders EMPTY — an unlimited namespace that looks quotaed. A
+# tenant.yaml asking for tier: xlarge must stop the render, not pass silently.
+{{- $tier := index .Values.tiers .Values.tenant.tier | default dict }}
+{{- if not $tier.cpuRequests }}
+{{- fail (printf "unknown tier %q — valid tiers: %s" .Values.tenant.tier (keys .Values.tiers | sortAlpha | join ", ")) }}
+{{- end }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-quota
+  namespace: {{ .Values.tenant.name | quote }}
+spec:
+  hard:
+    requests.cpu: {{ required "tier is missing cpuRequests" $tier.cpuRequests | quote }}
+    requests.memory: {{ required "tier is missing memoryRequests" $tier.memoryRequests | quote }}
+    pods: {{ required "tier is missing pods" $tier.pods | quote }}

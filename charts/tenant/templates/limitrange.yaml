@@ -1,0 +1,19 @@
+# Per-container floor and ceiling inside the tenant.
+#
+# A ResourceQuota on requests.cpu makes the namespace REJECT any pod that omits
+# requests entirely. This LimitRange supplies them, so "I forgot to set limits"
+# becomes "the platform set them for me" instead of a failed deploy.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-limits
+  namespace: {{ .Values.tenant.name | quote }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: {{ .Values.containerDefaults.limits.cpu }}
+        memory: {{ .Values.containerDefaults.limits.memory }}
+      defaultRequest:
+        cpu: {{ .Values.containerDefaults.requests.cpu }}
+        memory: {{ .Values.containerDefaults.requests.memory }}

@@ -1,0 +1,80 @@
+# THE STANDARDISATION SEAM.
+#
+# WAVE 2: after the baseline namespaces (0) and policies (1) this cluster needs
+# before it can host tenants at all.
+#
+# One ApplicationSet, owned by the platform team, watching tenants/*/tenant.yaml.
+# Every developer request that lands in git becomes an ArgoCD Application built
+# from THIS template — same project, same sync policy, same chart. The platform
+# team edits the template once and every tenant on the cluster converges.
+#
+# Why an ApplicationSet and not one committed Application per tenant: an
+# Application per tenant means the request carries deployment configuration, so
+# each one can drift and each one has to be reviewed on its own terms. Here the
+# request carries four scalars and drift has nowhere to live.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenants
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app.kubernetes.io/part-of: fleet-management
+spec:
+  goTemplate: true
+  # Fail generation on a missing key rather than rendering an Application with an
+  # empty namespace. A malformed tenant.yaml should stop at the controller.
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - git:
+        repoURL: https://github.com/Kubernis/kubernetes-fleet-management.git
+        revision: main
+        files:
+          - path: "tenants/*/tenant.yaml"
+
+  # A tenant.yaml deleted from git deletes the namespace and everything in it.
+  # Deliberate: offboarding has to be as automatic as onboarding or the cluster
+  # fills with abandoned environments nobody will admit to owning.
+  syncPolicy:
+    preserveResourcesOnDeletion: false
+
+  template:
+    metadata:
+      name: 'tenant-{{ .tenant.name }}'
+      labels:
+        # Read by the Port ArgoCD integration off the generated Application, and
+        # by the Kubernetes exporter off the namespace this Application creates.
+        # Same value both sides -> both resolve to one Port environment entity.
+        port-environment: '{{ .tenant.name }}'
+        port-team: '{{ .tenant.team }}'
+        port-stage: '{{ .tenant.stage }}'
+        app.kubernetes.io/part-of: fleet-management
+      annotations:
+        platform.kubernis.io/tier: '{{ .tenant.tier }}'
+        platform.kubernis.io/requested-by: '{{ .tenant.requestedBy }}'
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/Kubernis/kubernetes-fleet-management.git
+        targetRevision: main
+        path: charts/tenant
+        helm:
+          # The request is data; the chart is the standard. Only these four
+          # values cross the boundary.
+          valuesObject:
+            tenant:
+              name: '{{ .tenant.name }}'
+              team: '{{ .tenant.team }}'
+              stage: '{{ .tenant.stage }}'
+              tier: '{{ .tenant.tier }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .tenant.name }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=false
