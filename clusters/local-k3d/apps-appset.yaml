@@ -1,0 +1,71 @@
+# Deployment declarations. The tenants ApplicationSet's sibling.
+#
+# WAVE 3: after tenants (wave 2), because an Application here targets its
+# environment's ArgoCD project — which the tenant chart creates.
+#
+# The split this file exists to enforce:
+#
+#   this repo         WHAT should be deployed WHERE   (platform-governed intent)
+#   the team's repo   the manifests themselves         (team-owned content)
+#
+# ArgoCD is only ever configured from here. Teams never write an Application,
+# never touch the argocd namespace, and never choose a sync policy — but they
+# fully own what is inside their manifests.
+#
+# Note there are no guardrails in this template. There do not need to be: the
+# generated Application lands in the tenant's own AppProject, whose sourceRepos
+# and single destination already make it impossible for a team to pull from
+# another team's repo or deploy outside its own namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app.kubernetes.io/part-of: fleet-management
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - git:
+        repoURL: https://github.com/Kubernis/kubernetes-fleet-management.git
+        revision: main
+        files:
+          - path: "apps/*/app.yaml"
+
+  # Removing an app.yaml removes the workload, not the environment. Tenants and
+  # the things running in them have independent lifecycles.
+  syncPolicy:
+    preserveResourcesOnDeletion: false
+
+  template:
+    metadata:
+      # Naming contract: <environment>-<service>, e.g. checkout-dev-cart.
+      name: '{{ .app.environment }}-{{ .app.name }}'
+      labels:
+        port-environment: '{{ .app.environment }}'
+        port-service: '{{ .app.name }}'
+        port-team: '{{ .app.team }}'
+        app.kubernetes.io/part-of: fleet-management
+    spec:
+      # The tenant's own project. This one line is the entire security model:
+      # sourceRepos and destination were fixed when the environment was created.
+      project: '{{ .app.environment }}'
+      source:
+        repoURL: 'https://github.com/Kubernis/{{ .app.repo }}.git'
+        targetRevision: '{{ .app.targetRevision }}'
+        path: '{{ .app.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .app.environment }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        # The namespace already exists — the tenant made it, with its quota and
+        # network policy. An app must never create its own.
+        syncOptions:
+          - CreateNamespace=false
