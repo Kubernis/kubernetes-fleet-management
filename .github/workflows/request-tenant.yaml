@@ -1,0 +1,185 @@
+# The dispatcher behind Port's "Request an environment" action.
+#
+# It does exactly one thing: turn a form submission into a reviewed file in this
+# repository. It never touches the cluster — ArgoCD pulls. That is why this
+# works from a GitHub-hosted runner with no access to the Kubernetes API, and
+# why Port holds no cluster credential.
+#
+# It lives in this repo rather than a shared dispatcher repo so the built-in
+# GITHUB_TOKEN can commit here. A cross-repo push would need a PAT to create,
+# store and rotate — a credential whose only job is to expire at a bad moment.
+name: Request tenant environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      team:
+        description: Owning team identifier (must match a Port team)
+        required: true
+        type: string
+      stage:
+        description: Environment stage
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+      tier:
+        description: Capacity tier
+        required: true
+        type: choice
+        options: [small, medium, large]
+      requested_by:
+        description: Email of the requesting developer
+        required: true
+        type: string
+      port_run_id:
+        description: Port run ID, used to report progress back
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Port form already constrains these. We re-check because the action
+      # is also reachable over the API, and the form is a convenience, not a
+      # security boundary.
+      - name: Validate request
+        id: validate
+        env:
+          TEAM: ${{ inputs.team }}
+          STAGE: ${{ inputs.stage }}
+          TIER: ${{ inputs.tier }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TEAM" =~ ^[a-z][a-z0-9_-]{1,30}$ ]]; then
+            echo "::error::team '$TEAM' must be lowercase alphanumeric with - or _"; exit 1
+          fi
+          case "$STAGE" in dev|staging|prod) ;; *) echo "::error::bad stage"; exit 1 ;; esac
+          case "$TIER"  in small|medium|large) ;; *) echo "::error::bad tier";  exit 1 ;; esac
+
+          # Namespace name is DERIVED, never supplied. This is what keeps
+          # port-environment usable as a join key across ArgoCD, Kubernetes and
+          # Port — the moment humans name namespaces, the key rots.
+          NAME="${TEAM}-${STAGE}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+          if [ -f "tenants/${NAME}/tenant.yaml" ]; then
+            echo "::error::tenant ${NAME} already exists — use the existing environment"; exit 1
+          fi
+
+      - name: Render the request from the platform template
+        env:
+          TENANT_NAME: ${{ steps.validate.outputs.name }}
+          TENANT_TEAM: ${{ inputs.team }}
+          TENANT_STAGE: ${{ inputs.stage }}
+          TENANT_TIER: ${{ inputs.tier }}
+          REQUESTED_BY: ${{ inputs.requested_by }}
+          PORT_RUN_ID: ${{ inputs.port_run_id || 'manual' }}
+        run: |
+          set -euo pipefail
+          REQUESTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && export REQUESTED_AT
+          mkdir -p "tenants/${TENANT_NAME}"
+          envsubst < request-templates/tenant.yaml.tmpl > "tenants/${TENANT_NAME}/tenant.yaml"
+          echo "--- rendered ---"; cat "tenants/${TENANT_NAME}/tenant.yaml"
+
+      # Prove the request produces valid Kubernetes BEFORE it reaches git. An
+      # unknown tier or a missing field fails here, in a run the developer can
+      # read, instead of silently as an OutOfSync Application later.
+      - name: Verify it renders against the tenant chart
+        env:
+          NAME: ${{ steps.validate.outputs.name }}
+        run: |
+          set -euo pipefail
+          helm template "$NAME" charts/tenant \
+            --set tenant.name="$NAME" \
+            --set tenant.team="${{ inputs.team }}" \
+            --set tenant.stage="${{ inputs.stage }}" \
+            --set tenant.tier="${{ inputs.tier }}" > /tmp/rendered.yaml
+          echo "rendered $(grep -c '^kind:' /tmp/rendered.yaml) objects"
+
+      # dev self-serves; staging and prod go through review. Same action,
+      # friction proportional to blast radius.
+      - name: Commit (dev) or open a pull request (staging / prod)
+        id: deliver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.validate.outputs.name }}
+        run: |
+          set -euo pipefail
+          git config user.name  "port-self-service[bot]"
+          git config user.email "port-self-service[bot]@users.noreply.github.com"
+          git add "tenants/${NAME}/tenant.yaml"
+
+          MSG="Provision tenant ${NAME} (${{ inputs.tier }}) for ${{ inputs.team }}"
+          BODY="Requested by ${{ inputs.requested_by }} via Port.
+
+          | field | value |
+          |---|---|
+          | environment | \`${NAME}\` |
+          | team | ${{ inputs.team }} |
+          | stage | ${{ inputs.stage }} |
+          | tier | ${{ inputs.tier }} |
+
+          On merge the tenants ApplicationSet generates the ArgoCD Application,
+          which creates the namespace, quota, limits, network policies and the
+          tenant's own ArgoCD project."
+
+          if [ "${{ inputs.stage }}" = "dev" ]; then
+            git commit -m "$MSG"
+            git push
+            echo "mode=committed" >> "$GITHUB_OUTPUT"
+            echo "url=${{ github.server_url }}/${{ github.repository }}/commit/$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            BRANCH="tenant/${NAME}-${{ github.run_id }}"
+            git checkout -b "$BRANCH"
+            git commit -m "$MSG"
+            git push -u origin "$BRANCH"
+            URL=$(gh pr create --title "$MSG" --body "$BODY" --base main --head "$BRANCH")
+            echo "mode=pr" >> "$GITHUB_OUTPUT"
+            echo "url=$URL" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Optional: close the loop in Port's run log. Skipped cleanly when the
+      # credentials are absent, so the provisioning path never depends on it.
+      - name: Report back to Port
+        if: ${{ always() && inputs.port_run_id != '' }}
+        env:
+          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+          RUN_ID: ${{ inputs.port_run_id }}
+          MODE: ${{ steps.deliver.outputs.mode }}
+          URL: ${{ steps.deliver.outputs.url }}
+          NAME: ${{ steps.validate.outputs.name }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PORT_CLIENT_ID:-}" ]; then
+            echo "PORT_CLIENT_ID not set — skipping Port callback"; exit 0
+          fi
+          TOKEN=$(curl -sS -X POST https://api.port.io/v1/auth/access_token \
+            -H 'Content-Type: application/json' \
+            -d "{\"clientId\":\"${PORT_CLIENT_ID}\",\"clientSecret\":\"${PORT_CLIENT_SECRET}\"}" \
+            | jq -r .accessToken)
+
+          if [ "$OUTCOME" = "success" ]; then
+            STATUS="SUCCESS"
+            if [ "$MODE" = "pr" ]; then
+              MESSAGE="Tenant ${NAME} awaiting review: ${URL}"
+            else
+              MESSAGE="Tenant ${NAME} committed: ${URL} — ArgoCD will provision it shortly."
+            fi
+          else
+            STATUS="FAILURE"
+            MESSAGE="Tenant request for ${NAME} failed. See ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+
+          curl -sS -X PATCH "https://api.port.io/v1/actions/runs/${RUN_ID}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -d "{\"status\":\"${STATUS}\",\"message\":{\"run_status\":\"${MESSAGE}\"}}"
