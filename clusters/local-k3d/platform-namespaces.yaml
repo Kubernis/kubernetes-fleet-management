@@ -1,0 +1,28 @@
+# Baseline namespaces for this cluster.
+#
+# WAVE 0: these namespaces must exist before anything is placed inside them —
+# see platform-policies.yaml at wave 1.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-namespaces
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/part-of: fleet-management
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Kubernis/fleet-management.git
+    targetRevision: main
+    path: clusters/local-k3d/manifests/namespaces
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

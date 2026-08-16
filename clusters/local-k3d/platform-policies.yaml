@@ -1,0 +1,28 @@
+# Guardrails that live INSIDE the baseline namespaces.
+#
+# WAVE 1: strictly after platform-namespaces (wave 0). A LimitRange addressed to
+# a namespace that does not exist yet fails to apply.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-policies
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/part-of: fleet-management
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Kubernis/fleet-management.git
+    targetRevision: main
+    path: clusters/local-k3d/manifests/policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

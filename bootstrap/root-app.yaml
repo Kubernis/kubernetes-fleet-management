@@ -1,0 +1,31 @@
+# App-of-apps root. THE ONLY FILE A HUMAN APPLIES.
+#
+# It syncs clusters/local-k3d FLAT (recurse: false), so the Applications sitting
+# at the top of that directory are applied and manifests/ underneath is left for
+# them to point at. Because those Applications are all resources of THIS one
+# parent, argocd.argoproj.io/sync-wave orders them against each other.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fleet-local-k3d
+  namespace: argocd
+  labels:
+    port-environment: "platform"
+    app.kubernetes.io/part-of: fleet-management
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Kubernis/fleet-management.git
+    targetRevision: main
+    path: clusters/local-k3d
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

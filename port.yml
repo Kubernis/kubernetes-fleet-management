@@ -1,0 +1,6 @@
+- identifier: fleet-management
+  title: Fleet Management
+  blueprint: service
+  team: platform_team
+  properties:
+    criticality: high
