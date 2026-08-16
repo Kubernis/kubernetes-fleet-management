@@ -55,7 +55,10 @@ spec:
         platform.kubernis.io/tier: '{{ .tenant.tier }}'
         platform.kubernis.io/requested-by: '{{ .tenant.requestedBy }}'
     spec:
-      project: default
+      # The platform's stamping project — NOT the tenant's own. The tenant chart
+      # needs to create a Namespace and an AppProject, both cluster-scoped, which
+      # the per-tenant project deliberately forbids.
+      project: platform-tenants
       source:
         repoURL: https://github.com/Kubernis/kubernetes-fleet-management.git
         targetRevision: main

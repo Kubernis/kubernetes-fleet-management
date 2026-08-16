@@ -1,0 +1,52 @@
+# The tenant's ArgoCD boundary. Created BY the platform, FOR the team.
+#
+# This is what makes isolation enforced rather than reviewed: an Application in
+# this project can only target this one namespace. A team cannot deploy into
+# another team's tenant — ArgoCD rejects it at the API, no reviewer required.
+#
+# The blacklist below is the important half. The platform owns capacity and
+# network segmentation, so a team cannot widen its own quota, relax its own
+# LimitRange, open its own NetworkPolicy, or mint RBAC to escalate out of the
+# namespace. Those four exclusions are the guardrails; everything else in the
+# namespace is theirs.
+#
+# Adding a kind here is a platform decision, not a team one.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.tenant.name | quote }}
+  namespace: argocd
+  labels:
+    app.kubernetes.io/managed-by: fleet-management
+    port-environment: {{ .Values.tenant.name | quote }}
+    port-team: {{ .Values.tenant.team | quote }}
+spec:
+  description: >-
+    {{ .Values.tenant.team }} — {{ .Values.tenant.stage }} tenant
+
+  # Which repositories may deploy here. Defaults to the team's own repos so a
+  # tenant cannot be fed from an unrelated project.
+  sourceRepos:
+  {{- range .Values.appProject.sourceRepos }}
+    - {{ tpl . $ | quote }}
+  {{- end }}
+
+  # One destination. This single block is the isolation guarantee.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ .Values.tenant.name | quote }}
+
+  # Nothing cluster-scoped. Ever. A team's Application cannot create a
+  # Namespace, a ClusterRole, a CRD, or a webhook.
+  clusterResourceWhitelist: []
+
+  # Platform-owned kinds, denied inside the team's own namespace.
+  namespaceResourceBlacklist:
+  {{- range .Values.appProject.deniedKinds }}
+    - group: {{ .group | quote }}
+      kind: {{ .kind | quote }}
+  {{- end }}
+
+  # Anything running in the tenant that git did not put there shows as orphaned.
+  orphanedResources:
+    warn: true

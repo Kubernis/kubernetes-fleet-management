@@ -1,0 +1,45 @@
+# The project the PLATFORM uses to stamp tenants. Not the project teams deploy in.
+#
+# WAVE 1: must exist before the tenants ApplicationSet (wave 2) generates anything
+# into it.
+#
+# Two projects, because the two jobs need opposite permissions:
+#
+#   platform-tenants  (this file)   creates Namespaces and AppProjects — cluster-
+#                                   scoped power, but only ever from THIS repo.
+#   <tenant-name>     (per tenant)  created by charts/tenant. Zero cluster scope,
+#                                   locked to one namespace. Teams deploy here.
+#
+# Collapsing them into one would hand every team the ability to mint namespaces.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform-tenants
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/part-of: fleet-management
+spec:
+  description: Platform-managed tenant environments
+
+  # Only this repo. A tenant is never stamped from a team's own repository.
+  sourceRepos:
+    - https://github.com/Kubernis/kubernetes-fleet-management.git
+
+  # Any namespace on the local cluster — this is the project that CREATES them.
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: '*'
+
+  # The only cluster-scoped kinds the platform needs to stamp a tenant.
+  # Everything else stays denied, including on the platform side.
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: argoproj.io
+      kind: AppProject
+
+  # Surface anything living in a tenant namespace that git did not put there.
+  orphanedResources:
+    warn: true

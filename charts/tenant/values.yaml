@@ -38,3 +38,28 @@ containerDefaults:
 # controls dev never exercised" is exactly the drift this repo exists to stop.
 networkPolicy:
   enabled: true
+
+# The tenant's ArgoCD boundary.
+appProject:
+  # Repos allowed to deploy into this tenant. Rendered with `tpl`, so
+  # {{ .Values.tenant.* }} is available — the default scopes a tenant to its own
+  # team's repositories by naming convention.
+  sourceRepos:
+    - 'https://github.com/Kubernis/{{ .Values.tenant.team }}-*'
+
+  # Kinds a team may NOT create inside its own namespace, because the platform
+  # owns them. Removing an entry here hands that control to every team at once.
+  deniedKinds:
+    # Capacity — a team cannot widen its own quota or relax its own limits.
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    # Network segmentation is a platform concern.
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    # No minting permissions: the escalation path out of a namespace.
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
