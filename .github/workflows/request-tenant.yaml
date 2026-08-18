@@ -103,9 +103,10 @@ jobs:
             --set tenant.tier="${{ inputs.tier }}" > /tmp/rendered.yaml
           echo "rendered $(grep -c '^kind:' /tmp/rendered.yaml) objects"
 
-      # dev self-serves; staging and prod go through review. Same action,
-      # friction proportional to blast radius.
-      - name: Commit (dev) or open a pull request (staging / prod)
+      # Every request lands as a pull request, whatever the stage. The review
+      # IS the approval: CODEOWNERS routes tenants/ to the infrastructure team,
+      # so provisioning cannot happen without a named human merging a diff.
+      - name: Open a pull request for review
         id: deliver
         env:
           GH_TOKEN: ${{ github.token }}
@@ -130,20 +131,13 @@ jobs:
           which creates the namespace, quota, limits, network policies and the
           tenant's own ArgoCD project."
 
-          if [ "${{ inputs.stage }}" = "dev" ]; then
-            git commit -m "$MSG"
-            git push
-            echo "mode=committed" >> "$GITHUB_OUTPUT"
-            echo "url=${{ github.server_url }}/${{ github.repository }}/commit/$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          else
-            BRANCH="tenant/${NAME}-${{ github.run_id }}"
-            git checkout -b "$BRANCH"
-            git commit -m "$MSG"
-            git push -u origin "$BRANCH"
-            URL=$(gh pr create --title "$MSG" --body "$BODY" --base main --head "$BRANCH")
-            echo "mode=pr" >> "$GITHUB_OUTPUT"
-            echo "url=$URL" >> "$GITHUB_OUTPUT"
-          fi
+          BRANCH="tenant/${NAME}-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          git commit -m "$MSG"
+          git push -u origin "$BRANCH"
+          URL=$(gh pr create --title "$MSG" --body "$BODY" --base main --head "$BRANCH")
+          echo "mode=pr" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       # Optional: close the loop in Port's run log. Skipped cleanly when the
       # credentials are absent, so the provisioning path never depends on it.

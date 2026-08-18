@@ -1,0 +1,14 @@
+# Review routing for the fleet.
+#
+# Tenant requests are written here by Port's self-service action, never by hand.
+# The review IS the approval: a namespace cannot exist until someone named below
+# merges the diff that asks for it.
+#
+# The split matters. Infrastructure reviews individual REQUESTS — is this team
+# entitled to this capacity on this cluster. The platform team owns the STANDARD
+# itself, because a change under charts/ silently re-provisions every existing
+# tenant on the next sync.
+
+/tenants/     @Kubernis/global-infra
+/charts/      @Kubernis/platform-team
+/clusters/    @Kubernis/platform-team
