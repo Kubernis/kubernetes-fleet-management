@@ -4,7 +4,11 @@ metadata:
   name: fleet-local-k3d
   namespace: argocd
   labels:
-    port-environment: "platform"
+    # Deliberately NOT labelled port-environment. That label means "this
+    # Application belongs to a tenant environment", and the Port mapping
+    # creates an environment entity from it. The fleet root is not a tenant —
+    # labelling it conjured a phantom environment called "platform" into the
+    # catalog with every property null.
     app.kubernetes.io/part-of: fleet-management
 spec:
   project: default
