@@ -1,21 +1,25 @@
-# Deployment declarations. The tenants ApplicationSet's sibling.
+# Deployments, discovered from the TEAMS' OWN repositories.
 #
-# WAVE 3: after tenants (wave 2), because an Application here targets its
-# environment's ArgoCD project — which the tenant chart creates.
+# WAVE 3: after tenants (wave 2), because every Application generated here
+# targets its environment's ArgoCD project — which the tenant chart creates.
 #
-# The split this file exists to enforce:
+# The split this file enforces:
 #
-#   this repo         WHAT should be deployed WHERE   (platform-governed intent)
-#   the team's repo   the manifests themselves         (team-owned content)
+#   the platform  owns WHERE things may land   (this ApplicationSet, the projects)
+#   the team      owns WHAT lands and HOW      (their chart, their values)
 #
-# ArgoCD is only ever configured from here. Teams never write an Application,
-# never touch the argocd namespace, and never choose a sync policy — but they
-# fully own what is inside their manifests.
+# A developer deploys to a new environment by adding envs/<stage>/values.yaml to
+# their own repository and opening a pull request there. They never commit to
+# this repo — which is correct, because they cannot merge here anyway.
 #
-# Note there are no guardrails in this template. There do not need to be: the
-# generated Application lands in the tenant's own AppProject, whose sourceRepos
-# and single destination already make it impossible for a team to pull from
-# another team's repo or deploy outside its own namespace.
+# The ApplicationSet itself stays platform-owned because ApplicationSets live in
+# the argocd namespace. Handing that to teams would be handing them the control
+# plane, which is the whole thing we are avoiding.
+#
+# SCALE NOTE: one git generator per team repository is fine at demo size. At
+# fleet scale this becomes an scmProvider generator that discovers repositories
+# by GitHub topic (team-*), with the same nested file generator — no per-repo
+# entry to maintain.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -31,41 +35,51 @@ spec:
 
   generators:
     - git:
-        repoURL: https://github.com/Kubernis/kubernetes-fleet-management.git
+        repoURL: https://github.com/Kubernis/checkout-cart.git
         revision: main
+        # Each values file IS a deployment declaration. Its contents become the
+        # template parameters below.
         files:
-          - path: "apps/*/app.yaml"
+          - path: "envs/*/values.yaml"
 
-  # Removing an app.yaml removes the workload, not the environment. Tenants and
-  # the things running in them have independent lifecycles.
+  # Removing a values file removes the workload, not the environment. The two
+  # have independent lifecycles.
   syncPolicy:
     preserveResourcesOnDeletion: false
 
   template:
     metadata:
-      # Naming contract: <environment>-<service>, e.g. checkout-dev-cart.
-      name: '{{ .app.environment }}-{{ .app.name }}'
+      # Naming contract: <environment>-<service>
+      name: '{{ .environment }}-{{ .service }}'
       labels:
-        port-environment: '{{ .app.environment }}'
-        port-service: '{{ .app.name }}'
-        port-team: '{{ .app.team }}'
+        # Read by Port to build the `workload` entity joining service to
+        # environment. Stamped here, by the platform, so a team cannot mislabel
+        # its way into someone else's catalog entry.
+        port-environment: '{{ .environment }}'
+        port-service: '{{ .service }}'
+        port-team: '{{ .team }}'
         app.kubernetes.io/part-of: fleet-management
     spec:
-      # The tenant's own project. This one line is the entire security model:
-      # sourceRepos and destination were fixed when the environment was created.
-      project: '{{ .app.environment }}'
+      # The tenant's own project. Its sourceRepos and single destination were
+      # fixed when the environment was created, so nothing below can escape it.
+      project: '{{ .environment }}'
       source:
-        repoURL: 'https://github.com/Kubernis/{{ .app.repo }}.git'
-        targetRevision: '{{ .app.targetRevision }}'
-        path: '{{ .app.path }}'
+        repoURL: https://github.com/Kubernis/checkout-cart.git
+        targetRevision: main
+        path: chart
+        helm:
+          # The values file that generated this Application is the one applied
+          # to it. `.path.basename` is the directory under envs/.
+          valueFiles:
+            - '../envs/{{ .path.basename }}/values.yaml'
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{ .app.environment }}'
+        namespace: '{{ .environment }}'
       syncPolicy:
         automated:
           prune: true
           selfHeal: true
         # The namespace already exists — the tenant made it, with its quota and
-        # network policy. An app must never create its own.
+        # network policy. An application must never create its own.
         syncOptions:
           - CreateNamespace=false
